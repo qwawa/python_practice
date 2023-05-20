@@ -1,0 +1,126 @@
+import kss
+import csv
+from transformers import AutoTokenizer, AutoModel
+import openpyxl
+from konlpy.tag import Komoran
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer
+
+def komoran_tokenizer(sent):
+    re_sent = sent.replace('\n','').replace('\t','').replace('\r','')
+    komoran = Komoran()
+    words = komoran.morphs(re_sent)
+    return words
+
+# 텍스트 요약 함수
+def summarize_text(text, num_sentences=3):
+    if text == "":
+        return "NAN"
+    sentences = kss.split_sentences(text)
+    tokenizer = AutoTokenizer.from_pretrained("beomi/kcbert-base")
+    model = AutoModel.from_pretrained("beomi/kcbert-base")
+
+    inputs = tokenizer(sentences, return_tensors='pt', padding=True, truncation=True)
+    outputs = model(**inputs)
+    sentence_embeddings = outputs.last_hidden_state.mean(dim=1)
+
+    sentence_scores = sentence_embeddings.sum(dim=1)
+    top_indices = sentence_scores.argsort(descending=True)[:num_sentences]
+
+    summary = [sentences[i] for i in top_indices]
+    return ' '.join(summary)
+
+# 핵심어 추출 함수
+def extract_keywords(text, top_k=5):
+    if text == "":
+        return ""
+
+    # 토크나이저 함수
+    tokenizer = komoran_tokenizer
+    komoran = Komoran()
+
+    stopwords = []
+    with open(r"C:\Users\Minho\Desktop\project\stopwords_kr.txt", "r", encoding="utf-8") as file:
+        for line in file:
+            stopwords.append(line.strip())
+
+    # TfidfVectorizer를 사용하여 TF-IDF 벡터화
+    vectorizer = TfidfVectorizer(tokenizer=tokenizer, stop_words=stopwords)  # 불용어(stopwords) 적용
+    tfidf_matrix = vectorizer.fit_transform([text])
+
+    # 단어별 TF-IDF 점수 계산
+    feature_names = vectorizer.get_feature_names_out()
+    tfidf_scores = tfidf_matrix.toarray()[0]
+    keyword_scores = [(feature_names[i], tfidf_scores[i]) for i in range(len(feature_names))]
+
+    # TF-IDF 점수를 기준으로 상위 K개의 단어 추출
+    keywords = []
+    for keyword, score in sorted(keyword_scores, key=lambda x: x[1], reverse=True):
+        pos_tags = komoran.pos(keyword)
+        
+        # 단어의 길이가 1보다 큰지 확인하여 한 글자 단어 제외
+        if len(keyword) > 1:
+            keywords.append(keyword)
+        
+        if len(keywords) == top_k:
+            break
+    
+    return keywords
+
+# 텍스트 읽기 함수
+def read_csv_column(file_path, column_index):
+    strings = []
+    with open(file_path, 'r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            if len(row) > column_index:
+                strings.append(row[column_index])
+    return strings
+
+# 메인
+file_path = r'C:\Users\Minho\Desktop\project\missonf.csv'  # CSV 파일의 경로
+column_index = 15  # p번째 열의 인덱스 (0부터 시작)
+
+column_strings = read_csv_column(file_path, column_index)
+
+# 요약 및 키워드 추출된 텍스트 저장할 엑셀 파일 생성
+
+
+for index in range(2, 2):
+    original_text = column_strings[index]
+    
+    sentences = kss.split_sentences(original_text)
+    text = ' '.join(sentences)  # Concatenate sentences with spaces
+    
+    summary_text = summarize_text(text)
+    keywords = extract_keywords(text)
+    
+    print(original_text + "\n")
+    print(summary_text + "\n")
+    print(", ".join(keywords) + "\n")
+
+
+"""
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.title = "Summary"
+
+for index in range(2, len(column_strings)):
+    original_text = column_strings[index]
+    
+    sentences = kss.split_sentences(original_text)
+    text = ' '.join(sentences)  # Concatenate sentences with spaces
+    
+    summary_text = summarize_text(text)
+    keywords = extract_keywords(text)
+
+    ws.cell(row=index+1, column=1, value=original_text)
+    ws.cell(row=index+1, column=2, value=summary_text)
+    ws.cell(row=index+1, column=3, value=", ".join(keywords))
+
+output_file_path = "summary_with_keywords.xlsx"
+wb.save(output_file_path)
+wb.close()
+
+print("요약된 텍스트와 핵심어가 %s 파일에 저장되었습니다." % output_file_path)
+"""
